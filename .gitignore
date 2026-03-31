@@ -84,6 +84,9 @@ test-results/
 benchmark-results/
 perf-reports/
 
+# MCP Registry tokens
+.mcpregistry_*
+
 # Script state files (may contain sensitive data)
 scripts/.import-progress.json
 scripts/*.state.json
