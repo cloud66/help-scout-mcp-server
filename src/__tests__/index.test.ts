@@ -1,6 +1,28 @@
 // Mock all dependencies BEFORE importing the module under test
 jest.mock('../utils/config.js', () => ({
   validateConfig: jest.fn(),
+  // production code reads config.writes.enabled (added in PR #23) and other config branches —
+  // the mock must mirror that shape or the SUT crashes on undefined property reads
+  config: {
+    helpscout: {
+      apiKey: '',
+      clientId: 'test-client-id',
+      clientSecret: 'test-client-secret',
+      baseUrl: 'https://api.helpscout.net/v2/',
+      defaultInboxId: undefined,
+    },
+    cache: { ttlSeconds: 300, maxSize: 10000 },
+    logging: { level: 'info' },
+    security: { allowPii: true },
+    writes: { enabled: false },
+    connectionPool: {
+      maxSockets: 50,
+      maxFreeSockets: 10,
+      timeout: 30000,
+      keepAlive: true,
+      keepAliveMsecs: 1000,
+    },
+  },
 }));
 
 jest.mock('../utils/logger.js', () => ({

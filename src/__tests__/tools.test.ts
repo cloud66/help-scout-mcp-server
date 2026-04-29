@@ -38,8 +38,8 @@ describe('ToolHandler', () => {
       delete process.env.HELPSCOUT_ENABLE_WRITES;
       const tools = await toolHandler.listTools();
 
-      // 17 read-only tools when writes are disabled
-      expect(tools).toHaveLength(17);
+      // 18 read-only tools when writes are disabled
+      expect(tools).toHaveLength(18);
       expect(tools.map(t => t.name)).toEqual([
         'searchInboxes',
         'searchConversations',
@@ -47,6 +47,7 @@ describe('ToolHandler', () => {
         'getThreads',
         'getServerTime',
         'listAllInboxes',
+        'listTags',
         'advancedConversationSearch',
         'comprehensiveConversationSearch',
         'structuredConversationFilter',
@@ -63,6 +64,7 @@ describe('ToolHandler', () => {
       expect(tools.map(t => t.name)).not.toContain('createReply');
       expect(tools.map(t => t.name)).not.toContain('createNote');
       expect(tools.map(t => t.name)).not.toContain('updateConversationStatus');
+      expect(tools.map(t => t.name)).not.toContain('updateConversationTags');
     });
 
     it('should have proper tool schemas', async () => {

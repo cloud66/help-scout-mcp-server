@@ -314,11 +314,25 @@ export const AssignConversationInputSchema = z.object({
   assigneeId: z.string().min(1, 'Assignee user ID is required'),
 });
 
+// Tag amendment input. mode controls how `tags` interacts with the conversation's existing tags:
+//   add     → union of existing + provided (default: matches "amend" intent)
+//   remove  → existing minus provided
+//   replace → exactly the provided list, discarding everything else (destructive)
+export const UpdateConversationTagsInputSchema = z.object({
+  conversationId: z.string().min(1, 'conversationId is required'),
+  tags: z.array(z.string().min(1, 'Tag names cannot be empty')).min(1, 'At least one tag is required'),
+  mode: z.enum(['add', 'remove', 'replace']).default('add'),
+});
+
 export const ListUsersInputSchema = z.object({
   page: z.number().min(1).default(1),
 });
 
 export const ListMailboxesInputSchema = z.object({
+  page: z.number().min(1).default(1),
+});
+
+export const ListTagsInputSchema = z.object({
   page: z.number().min(1).default(1),
 });
 
@@ -371,8 +385,10 @@ export type UpdateConversationStatusInput = z.infer<typeof UpdateConversationSta
 export type CreateNoteInput = z.infer<typeof CreateNoteInputSchema>;
 export type CreateConversationInput = z.infer<typeof CreateConversationInputSchema>;
 export type AssignConversationInput = z.infer<typeof AssignConversationInputSchema>;
+export type UpdateConversationTagsInput = z.infer<typeof UpdateConversationTagsInputSchema>;
 export type ListUsersInput = z.infer<typeof ListUsersInputSchema>;
 export type ListMailboxesInput = z.infer<typeof ListMailboxesInputSchema>;
+export type ListTagsInput = z.infer<typeof ListTagsInputSchema>;
 export type User = z.infer<typeof UserSchema>;
 export type ServerTime = z.infer<typeof ServerTimeSchema>;
 export type ApiError = z.infer<typeof ErrorSchema>;

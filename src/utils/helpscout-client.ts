@@ -463,6 +463,19 @@ export class HelpScoutClient {
     return response.data;
   }
 
+  // PUT is idempotent (replaces a resource with the same payload yields the same state),
+  // so retries are safe — unlike POST. Used by tag updates which fully replace the tag set.
+  async put<T = void>(endpoint: string, data: Record<string, unknown>): Promise<T> {
+    const response = await this.executeWithRetry<T>(() =>
+      this.client.put<T>(endpoint, data)
+    );
+
+    this.checkResponseStatus(response);
+    this.invalidateCacheAfterWrite(endpoint);
+
+    return response.data;
+  }
+
   /**
    * Invalidate cache after a write operation to ensure subsequent reads return fresh data.
    */

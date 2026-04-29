@@ -44,6 +44,23 @@ describe('Write Tools', () => {
       expect(toolNames).not.toContain('createReply');
       expect(toolNames).not.toContain('updateConversationStatus');
       expect(toolNames).not.toContain('createNote');
+      expect(toolNames).not.toContain('updateConversationTags');
+    });
+
+    it('should return error when calling updateConversationTags with writes disabled', async () => {
+      const request: CallToolRequest = {
+        method: 'tools/call',
+        params: {
+          name: 'updateConversationTags',
+          arguments: {
+            conversationId: '123',
+            tags: ['billing'],
+          },
+        },
+      };
+
+      const result = await toolHandler.callTool(request);
+      expect(result.isError).toBe(true);
     });
 
     it('should return error when calling createReply with writes disabled', async () => {
@@ -349,6 +366,262 @@ describe('Write Tools', () => {
 
         const result = await toolHandler.callTool(request);
         expect(result.isError).toBe(true);
+      });
+    });
+
+    describe('updateConversationTags', () => {
+      it('should add tags to existing set by default (mode=add)', async () => {
+        // GET conversation returns existing tags as objects
+        nock(baseURL)
+          .get('/conversations/123')
+          .reply(200, {
+            id: 123,
+            number: 9001,
+            subject: 'Existing convo',
+            status: 'active',
+            tags: [
+              { id: 1, name: 'billing', color: '#ff0000' },
+              { id: 2, name: 'urgent', color: '#000000' },
+            ],
+            mailbox: { id: 99, name: 'Support' },
+            threads: 3,
+          });
+
+        const putScope = nock(baseURL)
+          .put('/conversations/123/tags', (body: any) => {
+            // expect union of existing + new, in existing-order then additions
+            expect(body.tags).toEqual(['billing', 'urgent', 'refund-requested']);
+            return true;
+          })
+          .reply(204);
+
+        const request: CallToolRequest = {
+          method: 'tools/call',
+          params: {
+            name: 'updateConversationTags',
+            arguments: {
+              conversationId: '123',
+              tags: ['refund-requested'],
+            },
+          },
+        };
+
+        const result = await toolHandler.callTool(request);
+        const parsed = JSON.parse((result.content[0] as any).text);
+
+        expect(parsed.success).toBe(true);
+        expect(parsed.action).toBe('tags_updated');
+        expect(parsed.mode).toBe('add');
+        expect(parsed.previousTags).toEqual(['billing', 'urgent']);
+        expect(parsed.appliedTags).toEqual(['billing', 'urgent', 'refund-requested']);
+        expect(parsed.warning).toBeUndefined();
+        expect(putScope.isDone()).toBe(true);
+      });
+
+      it('should not duplicate tags when adding one that already exists', async () => {
+        nock(baseURL)
+          .get('/conversations/123')
+          .reply(200, {
+            id: 123,
+            number: 9001,
+            subject: 'x',
+            status: 'active',
+            tags: [{ id: 1, name: 'billing', color: '#ff0000' }],
+            mailbox: { id: 99, name: 'Support' },
+            threads: 1,
+          });
+
+        const putScope = nock(baseURL)
+          .put('/conversations/123/tags', (body: any) => {
+            expect(body.tags).toEqual(['billing']);
+            return true;
+          })
+          .reply(204);
+
+        const request: CallToolRequest = {
+          method: 'tools/call',
+          params: {
+            name: 'updateConversationTags',
+            arguments: {
+              conversationId: '123',
+              tags: ['billing'],
+              mode: 'add',
+            },
+          },
+        };
+
+        const result = await toolHandler.callTool(request);
+        const parsed = JSON.parse((result.content[0] as any).text);
+        expect(parsed.appliedTags).toEqual(['billing']);
+        expect(putScope.isDone()).toBe(true);
+      });
+
+      it('should remove tags from existing set in remove mode', async () => {
+        nock(baseURL)
+          .get('/conversations/456')
+          .reply(200, {
+            id: 456,
+            number: 9002,
+            subject: 'x',
+            status: 'active',
+            tags: [
+              { id: 1, name: 'billing', color: '#ff0000' },
+              { id: 2, name: 'urgent', color: '#000000' },
+              { id: 3, name: 'vip', color: '#00ff00' },
+            ],
+            mailbox: { id: 99, name: 'Support' },
+            threads: 2,
+          });
+
+        const putScope = nock(baseURL)
+          .put('/conversations/456/tags', (body: any) => {
+            expect(body.tags).toEqual(['billing', 'vip']);
+            return true;
+          })
+          .reply(204);
+
+        const request: CallToolRequest = {
+          method: 'tools/call',
+          params: {
+            name: 'updateConversationTags',
+            arguments: {
+              conversationId: '456',
+              tags: ['urgent'],
+              mode: 'remove',
+            },
+          },
+        };
+
+        const result = await toolHandler.callTool(request);
+        const parsed = JSON.parse((result.content[0] as any).text);
+
+        expect(parsed.success).toBe(true);
+        expect(parsed.mode).toBe('remove');
+        expect(parsed.appliedTags).toEqual(['billing', 'vip']);
+        expect(putScope.isDone()).toBe(true);
+      });
+
+      it('should replace all tags in replace mode without reading existing', async () => {
+        // crucially, replace mode should NOT issue a GET — only a PUT
+        const putScope = nock(baseURL)
+          .put('/conversations/789/tags', (body: any) => {
+            expect(body.tags).toEqual(['handled', 'closed-no-action']);
+            return true;
+          })
+          .reply(204);
+
+        const request: CallToolRequest = {
+          method: 'tools/call',
+          params: {
+            name: 'updateConversationTags',
+            arguments: {
+              conversationId: '789',
+              tags: ['handled', 'closed-no-action'],
+              mode: 'replace',
+            },
+          },
+        };
+
+        const result = await toolHandler.callTool(request);
+        const parsed = JSON.parse((result.content[0] as any).text);
+
+        expect(parsed.success).toBe(true);
+        expect(parsed.mode).toBe('replace');
+        expect(parsed.appliedTags).toEqual(['handled', 'closed-no-action']);
+        expect(parsed.previousTags).toBeUndefined();
+        expect(parsed.warning).toContain('discarded');
+        expect(putScope.isDone()).toBe(true);
+        // verify no pending GET mocks were left over
+        expect(nock.pendingMocks().filter(m => m.includes('GET'))).toHaveLength(0);
+      });
+
+      it('should reject empty tags array', async () => {
+        const request: CallToolRequest = {
+          method: 'tools/call',
+          params: {
+            name: 'updateConversationTags',
+            arguments: {
+              conversationId: '123',
+              tags: [],
+            },
+          },
+        };
+
+        const result = await toolHandler.callTool(request);
+        expect(result.isError).toBe(true);
+      });
+
+      it('should reject invalid mode', async () => {
+        const request: CallToolRequest = {
+          method: 'tools/call',
+          params: {
+            name: 'updateConversationTags',
+            arguments: {
+              conversationId: '123',
+              tags: ['x'],
+              mode: 'nuke',
+            },
+          },
+        };
+
+        const result = await toolHandler.callTool(request);
+        expect(result.isError).toBe(true);
+      });
+    });
+
+    describe('listTags', () => {
+      // listTags is a pure read operation — should work even with writes disabled,
+      // but we test it here alongside the other tag-related tools for cohesion
+      it('should list tags from /tags endpoint and surface name/slug/color/ticketCount', async () => {
+        const scope = nock(baseURL)
+          .get('/tags')
+          .query({ page: 1 })
+          .reply(200, {
+            _embedded: {
+              tags: [
+                { id: 1, name: 'billing', slug: 'billing', color: '#ff0000', ticketCount: 42 },
+                { id: 2, name: 'urgent', slug: 'urgent', color: '#000000', ticketCount: 7 },
+              ],
+            },
+            page: { size: 50, totalElements: 2, totalPages: 1, number: 1 },
+          });
+
+        const request: CallToolRequest = {
+          method: 'tools/call',
+          params: { name: 'listTags', arguments: {} },
+        };
+
+        const result = await toolHandler.callTool(request);
+        const parsed = JSON.parse((result.content[0] as any).text);
+
+        expect(parsed.returnedCount).toBe(2);
+        expect(parsed.tags[0]).toEqual({
+          id: 1,
+          name: 'billing',
+          slug: 'billing',
+          color: '#ff0000',
+          ticketCount: 42,
+        });
+        expect(parsed.usage).toContain('updateConversationTags');
+        expect(scope.isDone()).toBe(true);
+      });
+
+      it('should accept an explicit page parameter', async () => {
+        const scope = nock(baseURL)
+          .get('/tags')
+          .query({ page: 3 })
+          .reply(200, { _embedded: { tags: [] }, page: { size: 50, totalElements: 0, totalPages: 0, number: 3 } });
+
+        const request: CallToolRequest = {
+          method: 'tools/call',
+          params: { name: 'listTags', arguments: { page: 3 } },
+        };
+
+        const result = await toolHandler.callTool(request);
+        const parsed = JSON.parse((result.content[0] as any).text);
+
+        expect(parsed.returnedCount).toBe(0);
+        expect(scope.isDone()).toBe(true);
       });
     });
 

@@ -35,8 +35,10 @@ import {
   CreateNoteInputSchema,
   CreateConversationInputSchema,
   AssignConversationInputSchema,
+  UpdateConversationTagsInputSchema,
   ListUsersInputSchema,
   ListMailboxesInputSchema,
+  ListTagsInputSchema,
 } from '../schema/types.js';
 
 /**
@@ -283,6 +285,16 @@ export class ToolHandler {
               maximum: 100,
               default: 100,
             },
+          },
+        },
+      },
+      {
+        name: 'listTags',
+        description: 'List all tags used across all Help Scout inboxes, sorted alphabetically. Returns id, name, slug, color, ticket count, and timestamps for each tag. Useful before calling updateConversationTags to confirm exact existing tag spellings/slugs.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            page: { type: 'number', minimum: 1, default: 1, description: 'Page number (50 results per page)' },
           },
         },
       },
@@ -644,6 +656,32 @@ export class ToolHandler {
           },
         },
         {
+          name: 'updateConversationTags',
+          description: 'Add, remove, or replace tags on a conversation. Defaults to mode="add" which AMENDS the existing tag set (union). mode="remove" subtracts the given tags. mode="replace" discards ALL existing tags and sets exactly the provided list — use with care. Requires HELPSCOUT_ENABLE_WRITES=true.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              conversationId: {
+                type: 'string',
+                description: 'The conversation ID whose tags should be updated',
+              },
+              tags: {
+                type: 'array',
+                items: { type: 'string' },
+                minItems: 1,
+                description: 'Tag names to apply, remove, or replace with',
+              },
+              mode: {
+                type: 'string',
+                enum: ['add', 'remove', 'replace'],
+                default: 'add',
+                description: 'How to apply tags: add = union with existing (default, safe). remove = subtract from existing. replace = discard existing and use exactly this list (destructive).',
+              },
+            },
+            required: ['conversationId', 'tags'],
+          },
+        },
+        {
           name: 'assignConversation',
           description: 'Assign a conversation to a team member. Requires HELPSCOUT_ENABLE_WRITES=true.',
           inputSchema: {
@@ -800,11 +838,17 @@ export class ToolHandler {
         case 'assignConversation':
           result = await this.assignConversation(request.params.arguments || {});
           break;
+        case 'updateConversationTags':
+          result = await this.updateConversationTags(request.params.arguments || {});
+          break;
         case 'listUsers':
           result = await this.listUsers(request.params.arguments || {});
           break;
         case 'listMailboxes':
           result = await this.listMailboxes(request.params.arguments || {});
+          break;
+        case 'listTags':
+          result = await this.listTags(request.params.arguments || {});
           break;
         default:
           throw new Error(`Unknown tool: ${request.params.name}`);
@@ -2382,6 +2426,63 @@ export class ToolHandler {
     };
   }
 
+  private async updateConversationTags(args: Record<string, unknown>): Promise<CallToolResult> {
+    this.checkWritesEnabled();
+
+    const input = UpdateConversationTagsInputSchema.parse(args);
+    const { conversationId, tags: requestedTags, mode } = input;
+
+    // help scout's PUT /conversations/{id}/tags fully replaces the tag set,
+    // so for add/remove we must first read the current tags and merge client-side
+    let previousTags: string[] = [];
+    let finalTags: string[];
+
+    if (mode === 'replace') {
+      // de-duplicate but keep input order
+      finalTags = Array.from(new Set(requestedTags));
+    } else {
+      // fetch current tags off the conversation; tags are objects of shape {id, name, color}
+      const conversation = await helpScoutClient.get<Conversation>(`/conversations/${conversationId}`);
+      previousTags = (conversation.tags || []).map(t => t.name);
+
+      if (mode === 'add') {
+        // union, preserving existing order then appending new tags not already present
+        const existing = new Set(previousTags);
+        const additions = requestedTags.filter(t => !existing.has(t));
+        finalTags = [...previousTags, ...additions];
+      } else {
+        // remove: filter out the requested names from the existing set
+        const removeSet = new Set(requestedTags);
+        finalTags = previousTags.filter(t => !removeSet.has(t));
+      }
+    }
+
+    logger.info('Updating conversation tags', {
+      conversationId,
+      mode,
+      previousTagCount: previousTags.length,
+      finalTagCount: finalTags.length,
+    });
+
+    // help scout returns 204 no content on success; PUT replaces all tags
+    await helpScoutClient.put(`/conversations/${conversationId}/tags`, { tags: finalTags });
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          conversationId,
+          action: 'tags_updated',
+          mode,
+          previousTags: mode === 'replace' ? undefined : previousTags,
+          appliedTags: finalTags,
+          warning: mode === 'replace' ? 'All previous tags were discarded by replace mode.' : undefined,
+        }, null, 2),
+      }],
+    };
+  }
+
   private async assignConversation(args: Record<string, unknown>): Promise<CallToolResult> {
     this.checkWritesEnabled();
 
@@ -2460,6 +2561,35 @@ export class ToolHandler {
           })),
           returnedCount: mailboxes.length,
           pagination: response.page,
+        }, null, 2),
+      }],
+    };
+  }
+
+  private async listTags(args: Record<string, unknown>): Promise<CallToolResult> {
+    const input = ListTagsInputSchema.parse(args);
+
+    // GET /v2/tags returns all tags used across all inboxes, sorted alphabetically
+    const response = await helpScoutClient.get<PaginatedResponse<Record<string, unknown>>>('/tags', {
+      page: input.page,
+    });
+
+    const tags = response._embedded?.tags || [];
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          tags: tags.map((t: Record<string, unknown>) => ({
+            id: t.id,
+            name: t.name,
+            slug: t.slug,
+            color: t.color,
+            ticketCount: t.ticketCount,
+          })),
+          returnedCount: tags.length,
+          pagination: response.page,
+          usage: 'Use the exact "name" value with updateConversationTags to avoid creating near-duplicate tags.',
         }, null, 2),
       }],
     };
