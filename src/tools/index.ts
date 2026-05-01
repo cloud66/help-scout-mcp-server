@@ -553,7 +553,7 @@ export class ToolHandler {
       ...(config.writes.enabled ? [
         {
           name: 'createReply',
-          description: 'Send a reply on an existing conversation. IMPORTANT: Defaults to draft mode (draft=true) so a human can review before sending. Set draft=false to send immediately — this sends a real email to the customer and CANNOT be undone. Requires HELPSCOUT_ENABLE_WRITES=true.',
+          description: 'Create a DRAFT reply on an existing conversation. The reply is saved as a draft and is NEVER sent — a human must review and send it from the Help Scout UI. There is no parameter to override this; this tool cannot send mail. Requires HELPSCOUT_ENABLE_WRITES=true.',
           inputSchema: {
             type: 'object' as const,
             properties: {
@@ -572,11 +572,6 @@ export class ToolHandler {
                   email: { type: 'string', description: 'Customer email address' },
                 },
                 required: ['email'],
-              },
-              draft: {
-                type: 'boolean',
-                description: 'Create as draft for human review (default: true). Set to false to send immediately — THIS SENDS A REAL EMAIL.',
-                default: true,
               },
               cc: {
                 type: 'array',
@@ -631,7 +626,7 @@ export class ToolHandler {
         },
         {
           name: 'createConversation',
-          description: 'Create a new conversation. Defaults to draft mode (draft=true). Requires HELPSCOUT_ENABLE_WRITES=true.',
+          description: 'Create a new conversation as a DRAFT. The conversation is staged in pending state and is NEVER sent — a human must review and send it from the Help Scout UI. There is no parameter to override this; this tool cannot send mail. Requires HELPSCOUT_ENABLE_WRITES=true.',
           inputSchema: {
             type: 'object' as const,
             properties: {
@@ -648,7 +643,6 @@ export class ToolHandler {
               },
               mailboxId: { type: 'string', description: 'Mailbox ID to create conversation in' },
               text: { type: 'string', description: 'Message body text (HTML supported)' },
-              draft: { type: 'boolean', description: 'Create as draft (default: true)', default: true },
               tags: { type: 'array', items: { type: 'string' }, description: 'Tags to apply' },
               assignTo: { type: 'string', description: 'User ID to assign to' },
             },
@@ -2275,17 +2269,18 @@ export class ToolHandler {
     const input = CreateReplyInputSchema.parse(args);
     const conversationId = input.conversationId;
 
-    logger.info('Creating reply', {
+    logger.info('Creating draft reply', {
       conversationId,
-      draft: input.draft,
       hasCC: !!(input.cc && input.cc.length > 0),
       hasBCC: !!(input.bcc && input.bcc.length > 0),
     });
 
+    // draft is hardcoded to true and is NOT taken from input — this tool cannot send mail,
+    // it can only stage a draft for human review in the Help Scout UI
     const requestBody: Record<string, unknown> = {
       customer: { email: input.customer.email },
       text: input.text,
-      draft: input.draft,
+      draft: true,
     };
 
     if (input.cc && input.cc.length > 0) {
@@ -2297,8 +2292,6 @@ export class ToolHandler {
 
     await helpScoutClient.post(`/conversations/${conversationId}/reply`, requestBody);
 
-    const mode = input.draft ? 'draft' : 'sent';
-
     return {
       content: [{
         type: 'text',
@@ -2306,11 +2299,8 @@ export class ToolHandler {
           success: true,
           conversationId,
           action: 'reply_created',
-          mode,
-          message: input.draft
-            ? `Draft reply created on conversation ${conversationId}. A human must review and send it from the Help Scout UI.`
-            : `Reply sent on conversation ${conversationId}. The email has been delivered to the customer.`,
-          warning: input.draft ? undefined : 'This reply has been sent to the customer and cannot be undone.',
+          mode: 'draft',
+          message: `Draft reply created on conversation ${conversationId}. A human must review and send it from the Help Scout UI. This tool cannot send mail directly.`,
         }, null, 2),
       }],
     };
@@ -2380,9 +2370,8 @@ export class ToolHandler {
 
     const input = CreateConversationInputSchema.parse(args);
 
-    logger.info('Creating conversation', {
+    logger.info('Creating draft conversation', {
       mailboxId: input.mailboxId,
-      draft: input.draft,
       hasTags: !!(input.tags && input.tags.length > 0),
       hasAssignTo: !!input.assignTo,
     });
@@ -2393,12 +2382,14 @@ export class ToolHandler {
       text: input.text,
     };
 
+    // status is hardcoded to 'pending' — there is no parameter to flip it to 'active'.
+    // This tool cannot send mail; it can only stage a draft for human review.
     const requestBody: Record<string, unknown> = {
       subject: input.subject,
       customer: input.customer,
       mailboxId: Number(input.mailboxId),
       type: 'email',
-      status: input.draft ? 'pending' : 'active',
+      status: 'pending',
       threads: [thread],
     };
 
@@ -2417,10 +2408,8 @@ export class ToolHandler {
         text: JSON.stringify({
           success: true,
           action: 'conversation_created',
-          draft: input.draft,
-          message: input.draft
-            ? 'Draft conversation created. A human must review and send it from the Help Scout UI.'
-            : 'Conversation created and active.',
+          mode: 'draft',
+          message: 'Draft conversation created (status=pending). A human must review and send it from the Help Scout UI. This tool cannot send mail directly.',
         }, null, 2),
       }],
     };

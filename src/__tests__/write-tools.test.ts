@@ -125,7 +125,7 @@ describe('Write Tools', () => {
     });
 
     describe('createReply', () => {
-      it('should create a draft reply by default', async () => {
+      it('should always send draft=true to Help Scout (no parameter to override)', async () => {
         const scope = nock(baseURL)
           .post('/conversations/123/reply', (body: any) => {
             expect(body.text).toBe('Hello customer');
@@ -153,13 +153,17 @@ describe('Write Tools', () => {
         expect(parsed.success).toBe(true);
         expect(parsed.mode).toBe('draft');
         expect(parsed.action).toBe('reply_created');
+        expect(parsed.message).toContain('cannot send mail directly');
         expect(scope.isDone()).toBe(true);
       });
 
-      it('should create a sent reply when draft=false', async () => {
+      // defence in depth: a confused agent should not be able to send a real email
+      // by passing draft:false. The schema strips unknown keys (zod default) and the
+      // handler hardcodes draft:true regardless of input.
+      it('should ignore draft=false in input and still send draft=true to Help Scout', async () => {
         const scope = nock(baseURL)
           .post('/conversations/456/reply', (body: any) => {
-            expect(body.draft).toBe(false);
+            expect(body.draft).toBe(true);
             return true;
           })
           .reply(201);
@@ -170,7 +174,7 @@ describe('Write Tools', () => {
             name: 'createReply',
             arguments: {
               conversationId: '456',
-              text: 'Sent reply',
+              text: 'Attempted send',
               customer: { email: 'customer@example.com' },
               draft: false,
             },
@@ -181,8 +185,7 @@ describe('Write Tools', () => {
         const parsed = JSON.parse((result.content[0] as any).text);
 
         expect(parsed.success).toBe(true);
-        expect(parsed.mode).toBe('sent');
-        expect(parsed.warning).toContain('cannot be undone');
+        expect(parsed.mode).toBe('draft');
         expect(scope.isDone()).toBe(true);
       });
 
@@ -566,6 +569,75 @@ describe('Write Tools', () => {
 
         const result = await toolHandler.callTool(request);
         expect(result.isError).toBe(true);
+      });
+    });
+
+    describe('createConversation', () => {
+      it('should always create with status=pending (draft) regardless of input', async () => {
+        const scope = nock(baseURL)
+          .post('/conversations', (body: any) => {
+            expect(body.subject).toBe('Test subject');
+            expect(body.status).toBe('pending');
+            expect(body.type).toBe('email');
+            expect(body.customer.email).toBe('new@example.com');
+            return true;
+          })
+          .reply(201);
+
+        const request: CallToolRequest = {
+          method: 'tools/call',
+          params: {
+            name: 'createConversation',
+            arguments: {
+              subject: 'Test subject',
+              customer: { email: 'new@example.com' },
+              mailboxId: '99',
+              text: 'Body text',
+            },
+          },
+        };
+
+        const result = await toolHandler.callTool(request);
+        const parsed = JSON.parse((result.content[0] as any).text);
+
+        expect(parsed.success).toBe(true);
+        expect(parsed.action).toBe('conversation_created');
+        expect(parsed.mode).toBe('draft');
+        expect(parsed.message).toContain('cannot send mail directly');
+        expect(scope.isDone()).toBe(true);
+      });
+
+      // defence in depth: a confused agent should not be able to send a real email
+      // by passing draft:false. zod strips the unknown key and the handler hardcodes
+      // status='pending'.
+      it('should ignore draft=false in input and still create as pending', async () => {
+        const scope = nock(baseURL)
+          .post('/conversations', (body: any) => {
+            expect(body.status).toBe('pending');
+            return true;
+          })
+          .reply(201);
+
+        const request: CallToolRequest = {
+          method: 'tools/call',
+          params: {
+            name: 'createConversation',
+            arguments: {
+              subject: 'Test subject',
+              customer: { email: 'new@example.com' },
+              mailboxId: '99',
+              text: 'Body text',
+              draft: false,
+            },
+          },
+        };
+
+        const result = await toolHandler.callTool(request);
+        const parsed = JSON.parse((result.content[0] as any).text);
+
+        expect(parsed.success).toBe(true);
+        expect(parsed.mode).toBe('draft');
+        expect(scope.isDone()).toBe(true);
       });
     });
 

@@ -274,13 +274,15 @@ export const ListAllInboxesInputSchema = z.object({
 });
 
 // Write Operation Input Schemas
+// Draft-only reply: the `draft` flag is intentionally NOT in this schema.
+// The handler unconditionally sends draft=true to Help Scout, so the agent
+// has no way to send a real email through this tool.
 export const CreateReplyInputSchema = z.object({
   conversationId: z.string().min(1, 'conversationId is required'),
   text: z.string().min(1, 'Reply text is required'),
   customer: z.object({
     email: z.string().email('Valid customer email is required'),
   }),
-  draft: z.boolean().default(true),
   cc: z.array(z.string().email('Each CC entry must be a valid email')).optional(),
   bcc: z.array(z.string().email('Each BCC entry must be a valid email')).optional(),
 });
@@ -295,6 +297,10 @@ export const CreateNoteInputSchema = z.object({
   text: z.string().min(1, 'Note text is required'),
 });
 
+// Draft-only conversation: same lockdown as CreateReplyInputSchema. The `draft`
+// flag is intentionally absent so the agent has no parameter to flip; the
+// handler unconditionally creates the conversation in draft (status='pending')
+// state for human review in the Help Scout UI.
 export const CreateConversationInputSchema = z.object({
   subject: z.string().min(1, 'Subject is required'),
   customer: z.object({
@@ -304,7 +310,6 @@ export const CreateConversationInputSchema = z.object({
   }),
   mailboxId: z.string().min(1, 'Mailbox ID is required'),
   text: z.string().min(1, 'Message text is required'),
-  draft: z.boolean().default(true),
   tags: z.array(z.string()).optional(),
   assignTo: z.string().optional().describe('User ID to assign the conversation to'),
 });
